@@ -1,18 +1,18 @@
 {
   "verdict": {
-    "decision": "Hold",
+    "decision": "Release",
     "n_errors": 0,
-    "n_warn_images": 60,
-    "n_images": 205,
-    "warn_ratio": 0.2927,
+    "n_warn_images": 16,
+    "n_images": 203,
+    "warn_ratio": 0.0788,
     "reasons": [
-      "Tỉ lệ ảnh có cảnh báo 29.27% (60/205 ảnh) >= ngưỡng 10.00%"
+      "Đạt chuẩn xuất: 0 lỗi bắt buộc, tỉ lệ cảnh báo 7.88% (16/203 ảnh) < ngưỡng 10.00%"
     ]
   },
   "reviewed": 80,
   "budget": 80,
-  "seconds": 13.9,
+  "seconds": 15.0,
   "exported": "C:\\Users\\pdvie\\Documents\\AI-VinUni\\K5-L23-Day09-2A202603265-PhamDucViet-AutoQC-Pipeline-Lab\\submission\\export\\clean_v1",
-  "config_sha1": "b44ba77a8a036c1cad78e0c28ed1db6ba7404125",
+  "config_sha1": "cadafff65c40cdf3e291aca5320542fca17619bd",
   "review_sim_sha1": "7988ca22827f780a7043a2300490e679a1697154"
 }
