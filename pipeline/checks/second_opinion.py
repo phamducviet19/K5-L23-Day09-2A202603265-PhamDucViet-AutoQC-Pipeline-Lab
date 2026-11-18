@@ -40,5 +40,95 @@ from ..model_cache import get_preds  # noqa: F401
 
 
 def run(ds, cfg, preds=None):
-    # TODO
-    raise NotImplementedError("check second_opinion chưa làm")
+    if preds is None:
+        preds = get_preds(ds, cfg, "checker")
+    if preds is None:
+        preds = {}
+
+    cfg_so = cfg.get("second_opinion", {})
+    conf_thr = cfg_so.get("conf", 0.25)
+    min_area_px = cfg_so.get("min_area_px", 600)
+    fp_conf = cfg_so.get("fp_conf", 0.1)
+    iou_missing = cfg_so.get("iou_missing", 0.3)
+    iou_match = cfg_so.get("iou_match", 0.5)
+    iou_loose = cfg_so.get("iou_loose", 0.5)
+
+    issues = []
+
+    for img_p in ds.image_files():
+        stem = img_p.stem
+        if stem not in preds:
+            continue
+        if not ds.label_path(stem).exists():
+            continue
+
+        im_size = ds.image_size(stem)
+        W, H = im_size if im_size is not None else (640, 480)
+
+        all_preds = preds.get(stem, [])
+        # P = dự đoán có conf >= conf VÀ diện tích px >= min_area_px
+        P = [r for r in all_preds if r[1] >= conf_thr and (r[4] * W * r[5] * H) >= min_area_px]
+
+        # Đọc nhãn hợp lệ, lưu cả số dòng gốc
+        raw_lines = ds.read_label_lines(stem)
+        valid_label_lines = []
+        if raw_lines:
+            for line_no, ln in raw_lines:
+                try:
+                    b = parse_yolo_line(ln)
+                except ValueError:
+                    continue
+                if 0 <= b[0] < len(ds.classes):
+                    valid_label_lines.append((line_no, b))
+
+        L = [b for _, b in valid_label_lines]
+
+        # Kiểm tra từng dự đoán trong P
+        for r in P:
+            pred_cls = int(r[0])
+            pred_conf = float(r[1])
+            pred_box = (r[2], r[3], r[4], r[5])
+            cls_name = ds.classes[pred_cls] if 0 <= pred_cls < len(ds.classes) else f"lớp {pred_cls}"
+
+            cands_same = []
+            cands_diff = []
+            for l in L:
+                lbl_cls = l[0]
+                lbl_box = (l[1], l[2], l[3], l[4])
+                iou = iou_xywh(pred_box, lbl_box)
+                if iou >= iou_missing:
+                    if lbl_cls == pred_cls:
+                        cands_same.append((l, iou))
+                    else:
+                        cands_diff.append((l, iou))
+
+            cands = cands_same + cands_diff
+
+            if not cands:
+                issues.append(Issue("second_opinion", WARN, "POSSIBLE_MISSING", stem,
+                                    f"model phát hiện {cls_name} (conf {pred_conf:.2f}) nhưng nhãn thiếu",
+                                    line=None, extra={"conf": pred_conf}))
+            elif cands_same:
+                best_iou_same = max(iou for _, iou in cands_same)
+                if best_iou_same < iou_loose:
+                    issues.append(Issue("second_opinion", WARN, "POSSIBLE_LOOSE_BOX", stem,
+                                        f"box nhãn lỏng/lệch (IoU {best_iou_same:.2f} < {iou_loose})",
+                                        line=None, extra={"conf": pred_conf, "iou": best_iou_same}))
+            else:
+                best_iou_diff = max(iou for _, iou in cands_diff)
+                if best_iou_diff >= iou_match:
+                    issues.append(Issue("second_opinion", WARN, "POSSIBLE_WRONG_CLASS", stem,
+                                        f"gán nhầm lớp? model đoán {cls_name} (conf {pred_conf:.2f}), nhãn gán khác (IoU {best_iou_diff:.2f})",
+                                        line=None, extra={"conf": pred_conf, "iou": best_iou_diff}))
+
+        # Kiểm tra POSSIBLE_FALSE_POS cho từng dòng nhãn
+        fp_preds = [r for r in all_preds if r[1] >= fp_conf]
+        for line_no, (lbl_cls, cx, cy, w, h) in valid_label_lines:
+            lbl_box = (cx, cy, w, h)
+            matches_any = any(iou_xywh(lbl_box, (r[2], r[3], r[4], r[5])) >= iou_missing for r in fp_preds)
+            if not matches_any:
+                issues.append(Issue("second_opinion", WARN, "POSSIBLE_FALSE_POS", stem,
+                                    f"dòng {line_no}: box nhãn không khớp vật nào model thấy",
+                                    line=line_no, extra={"line": line_no}))
+
+    return issues
